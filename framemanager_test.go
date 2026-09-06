@@ -3341,3 +3341,35 @@ func TestAddAnimationResetsStaleDt(t *testing.T) {
 		t.Error("AddAnimation must reset lastAnim when transitioning from idle")
 	}
 }
+
+// A stationary MOUSE_MOVED repeat must not schedule a frame: on Windows 7
+// conhost every rendered frame re-posts such a record, so counting it as a
+// reason to render made the redraw loop feed itself forever.
+func TestFrameManager_DuplicateMouseMoveDoesNotRequestRender(t *testing.T) {
+	oldFM := FrameManager
+	fm := &frameManager{}
+	fm.Init(NewSilentScreenBuf())
+	FrameManager = fm
+	defer func() { FrameManager = oldFM }()
+
+	fm.Push(newMockFrame(0, 0, 40, 20, false))
+	getSize := func() (int, int, error) { return 40, 20, nil }
+	move := func() *vtinput.InputEvent {
+		return &vtinput.InputEvent{
+			Type:            vtinput.MouseEventType,
+			MouseX:          5,
+			MouseY:          5,
+			MouseEventFlags: vtinput.MouseMoved,
+		}
+	}
+
+	if !fm.consumeEvent(move(), false, getSize) {
+		t.Fatal("first mouse move at a new cell must request a render")
+	}
+	if fm.consumeEvent(move(), false, getSize) {
+		t.Fatal("repeated mouse move at the same cell must not request a render")
+	}
+	if fm.consumeEvent(nil, false, getSize) {
+		t.Fatal("nil event must not request a render")
+	}
+}
