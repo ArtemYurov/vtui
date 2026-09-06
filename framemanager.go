@@ -1591,6 +1591,22 @@ func (fm *frameManager) drawWorkspaceCounter() {
 	fm.scr.Write(x, 0, StringToCharInfo("/"+total+"]", baseAttr))
 }
 
+// syncTransientWorkspaceTabs relayouts and repaints only when the transient
+// WorkspaceTabsOnCtrl strip actually appeared or disappeared. The strip takes
+// and releases the top row as Ctrl is held after the first Ctrl+Tab, so frames
+// must relayout then; a plain redraw would leave the image where it was and let
+// it paint over the tabs. Ctrl alone never reveals the strip, and resizing every
+// frame of every workspace for an unchanged picture is expensive for embedders
+// that carry a terminal: each pass reaches the PTY behind the frame, so a stray
+// Ctrl tap made a shell repaint its prompt.
+func (fm *frameManager) syncTransientWorkspaceTabs(wasVisible bool) {
+	if wasVisible == fm.workspaceTabsVisible() {
+		return
+	}
+	fm.ResizeAllScreens()
+	fm.Redraw()
+}
+
 func (fm *frameManager) workspaceTabsVisible() bool {
 	switch fm.WorkspaceTabMode {
 	case WorkspaceTabsAlways:
@@ -2937,8 +2953,10 @@ func (fm *frameManager) dispatchEvent(ev *vtinput.InputEvent, is_injected bool) 
 		// keyboard focus. Clear the manager-side state as well as the backend
 		// tracker, otherwise the transient workspace UI can remain visible
 		// until an unrelated key event arrives.
+		wasTabsVisible := fm.workspaceTabsVisible()
 		fm.ctrlPressed = false
 		fm.workspaceTabPreview = false
+		fm.syncTransientWorkspaceTabs(wasTabsVisible)
 	} else if ev.Type == vtinput.KeyEventType {
 		wasCtrlPressed := fm.ctrlPressed
 		ctrl := (ev.ControlKeyState & (vtinput.LeftCtrlPressed | vtinput.RightCtrlPressed)) != 0
@@ -2947,15 +2965,11 @@ func (fm *frameManager) dispatchEvent(ev *vtinput.InputEvent, is_injected bool) 
 		}
 		fm.ctrlPressed = ctrl
 		if wasCtrlPressed != fm.ctrlPressed && fm.WorkspaceTabMode == WorkspaceTabsOnCtrl {
+			wasTabsVisible := wasCtrlPressed && fm.workspaceTabPreview
 			if !fm.ctrlPressed {
 				fm.workspaceTabPreview = false
 			}
-			// The overlay tab strip takes and releases the top row as Ctrl is
-			// held after the first Ctrl+Tab, so frames must relayout; a plain
-			// redraw would leave the image where it was and let it paint over
-			// the tabs.
-			fm.ResizeAllScreens()
-			fm.Redraw()
+			fm.syncTransientWorkspaceTabs(wasTabsVisible)
 		}
 
 		// Commit Switcher selection on Ctrl release

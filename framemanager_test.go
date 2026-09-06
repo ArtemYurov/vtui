@@ -1945,6 +1945,79 @@ func TestFrameManager_OnCtrlTabsArmAfterFirstCtrlTab(t *testing.T) {
 	}
 }
 
+type resizeCountingFrame struct {
+	mockFrame
+	resizeCalls int
+}
+
+func (f *resizeCountingFrame) ResizeConsole(w, h int) {
+	f.resizeCalls++
+	f.mockFrame.ResizeConsole(w, h)
+}
+
+func TestFrameManager_OnCtrlTabsSkipRelayoutForPlainCtrlTaps(t *testing.T) {
+	scr := NewSilentScreenBuf()
+	scr.AllocBuf(80, 25)
+	fm := &frameManager{}
+	fm.Init(scr)
+	frame := &resizeCountingFrame{}
+	frame.SetPosition(0, 0, 79, 24)
+	fm.Push(frame)
+	fm.AddScreenBackground(newMockFrame(0, 0, 80, 25, false))
+	fm.ConfigureWorkspaceTabs(WorkspaceTabsOnCtrl, WorkspaceCtrlTabDirect)
+	frame.resizeCalls = 0
+
+	ctrlDown := func() {
+		fm.dispatchEvent(&vtinput.InputEvent{
+			Type:            vtinput.KeyEventType,
+			KeyDown:         true,
+			VirtualKeyCode:  vtinput.VK_CONTROL,
+			ControlKeyState: vtinput.LeftCtrlPressed,
+		}, false)
+	}
+	ctrlUp := func() {
+		fm.dispatchEvent(&vtinput.InputEvent{
+			Type:           vtinput.KeyEventType,
+			KeyDown:        false,
+			VirtualKeyCode: vtinput.VK_CONTROL,
+		}, false)
+	}
+
+	for range 3 {
+		ctrlDown()
+		ctrlUp()
+	}
+	if fm.workspaceTabsVisible() {
+		t.Fatal("Ctrl alone should keep the workspace tab strip hidden")
+	}
+	if frame.resizeCalls != 0 {
+		t.Fatalf("plain Ctrl taps relayouted frames %d times while the strip stayed hidden", frame.resizeCalls)
+	}
+
+	ctrlDown()
+	fm.dispatchEvent(&vtinput.InputEvent{
+		Type:            vtinput.KeyEventType,
+		KeyDown:         true,
+		VirtualKeyCode:  vtinput.VK_TAB,
+		ControlKeyState: vtinput.LeftCtrlPressed,
+	}, false)
+	if !fm.workspaceTabsVisible() {
+		t.Fatal("the first Ctrl+Tab should reveal workspace tabs")
+	}
+	revealCalls := frame.resizeCalls
+	if revealCalls == 0 {
+		t.Fatal("revealing the tab strip must relayout frames")
+	}
+
+	ctrlUp()
+	if fm.workspaceTabsVisible() {
+		t.Fatal("releasing Ctrl should hide workspace tabs again")
+	}
+	if frame.resizeCalls == revealCalls {
+		t.Fatal("hiding the tab strip must relayout frames")
+	}
+}
+
 func TestFrameManager_WorkspaceTabsAndCounterRendering(t *testing.T) {
 	SetDefaultPalette()
 	scr := NewSilentScreenBuf()
