@@ -635,9 +635,10 @@ func RunEbitenHost(cols, rows int, fontName string, fontSize float64, setupApp f
 
 	// Copy and paste reach the OS through the shared clipboard helpers, which
 	// need nothing backend specific: the native path on Windows, and wl-copy,
-	// xclip, xsel or pbcopy elsewhere. Only the terminal escape fallback has
-	// to go, since this is a window and there is no terminal to receive it.
-	DisableTerminalClipboard()
+	// xclip, xsel or pbcopy elsewhere. The terminal escape fallback is left to
+	// UseWindowClipboard, which keeps it only where a window can still gain
+	// something from it.
+	UseWindowClipboard()
 	SetDragBackend(host)
 
 	setupApp()

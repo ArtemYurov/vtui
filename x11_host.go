@@ -653,9 +653,10 @@ func runInX11Window(cols, rows int, fontName string, fontSize float64, setupApp 
 		return host.cols, host.rows, nil
 	}
 
-	// No terminal is behind this window, so the OSC 52 fallback has nobody to
-	// reach and would print as garbage in the shell f4 was started from.
-	DisableTerminalClipboard()
+	// A window works from the OS clipboard helpers and the internal buffer;
+	// UseWindowClipboard decides what becomes of the OSC 52 fallback, which is
+	// worth keeping only where there is no helper to be had.
+	UseWindowClipboard()
 
 	go host.RunEventLoop()
 	setupApp()

@@ -5,6 +5,8 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+
+	"golang.org/x/term"
 )
 
 var (
@@ -33,6 +35,30 @@ func DisableTerminalClipboard() { noTerminalBehind.Store(true) }
 
 // TerminalClipboardDisabled reports whether the OSC 52 fallback is suppressed.
 func TerminalClipboardDisabled() bool { return noTerminalBehind.Load() }
+
+// UseWindowClipboard is what a GUI host calls at startup instead of reaching
+// for DisableTerminalClipboard itself.
+//
+// The escape is turned off only where it has nothing to offer. With an OS
+// clipboard driver present SetClipboard returns before ever reaching the
+// fallback, so suppressing it changes nothing; with no terminal on standard
+// output the escape goes into a pipe or a log and helps nobody. What is left
+// is the one case where it still works: a window with no clipboard helper
+// installed, started from a terminal. There the escape reaches that terminal
+// and the copy arrives in the system clipboard after all -- a Wayland session
+// with neither wl-copy nor XWayland behind it is exactly that case, and
+// turning the fallback off for it was a real loss.
+func UseWindowClipboard() {
+	if windowSuppressesTerminalClipboard(osClipboardAvailable(), stdoutIsTerminal()) {
+		DisableTerminalClipboard()
+	}
+}
+
+func windowSuppressesTerminalClipboard(osDriver, stdoutTTY bool) bool {
+	return osDriver || !stdoutTTY
+}
+
+func stdoutIsTerminal() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
 
 // SkipOSClipboard routes Set/GetClipboard past the OS clipboard helpers so
 // all traffic stays in the process-local buffer. Test suites set it (together
@@ -91,26 +117,17 @@ func SetOSClipboard(text string) bool {
 // resolveClipboardRead picks between what the OS clipboard answered and the
 // buffer this process keeps.
 //
-// An empty graphical clipboard is an answer, and behind a native window it is
-// a definite one: nothing there can be more current. In a terminal it is not.
-// goclip speaks X11 and Wayland itself, so a driver is available wherever
-// DISPLAY is set -- including an SSH session whose display is forwarded to a
-// machine that is not the one the terminal is on. That display can sit empty
-// while the clipboard the user actually sees holds what this process copied a
-// moment ago, and answering "empty" there loses the copy. A non-empty
-// graphical answer still wins, so a copy made in another application is never
-// overridden.
-func resolveClipboardRead(osText string, osOK bool, internal string, noTerminal bool) string {
-	if !osOK {
-		return internal
-	}
-	if osText != "" || noTerminal {
+// Whenever the OS clipboard answered, that answer wins -- empty included. An
+// empty clipboard is a state the user can see and act on, while falling
+// through to the process buffer would make the same clipboard paste different
+// things depending on whether this process happened to copy something earlier
+// in the session. The buffer is for when there is no OS clipboard to ask at
+// all, which is where it has always been the only thing left.
+func resolveClipboardRead(osText string, osOK bool, internal string) string {
+	if osOK {
 		return osText
 	}
-	if internal != "" {
-		return internal
-	}
-	return osText
+	return internal
 }
 
 func readClipboardSources() (osText string, osOK bool, internal string) {
@@ -133,7 +150,7 @@ func GetClipboard() string {
 	DebugLog("CLIPBOARD: GetFar2lClipboard FAILED or DISABLED")
 	osText, osOK, internal := readClipboardSources()
 	DebugLog("CLIPBOARD: getOSClipboard ok=%v, len: %d", osOK, len(osText))
-	text := resolveClipboardRead(osText, osOK, internal, noTerminalBehind.Load())
+	text := resolveClipboardRead(osText, osOK, internal)
 	DebugLog("CLIPBOARD: Returning %d bytes", len(text))
 	return text
 }
@@ -141,5 +158,5 @@ func GetClipboard() string {
 // GetOSClipboard bypasses terminal extensions and reads directly from the OS clipboard.
 func GetOSClipboard() string {
 	osText, osOK, internal := readClipboardSources()
-	return resolveClipboardRead(osText, osOK, internal, noTerminalBehind.Load())
+	return resolveClipboardRead(osText, osOK, internal)
 }

@@ -1142,7 +1142,7 @@ func RunWin32GuiHost(cols, rows int, fontName string, fontSize float64, setupApp
 		return cols, rows, nil
 	}
 
-	DisableTerminalClipboard()
+	UseWindowClipboard()
 	SetDragBackend(host)
 	setupApp()
 	SetActiveBackend("win32", fmt.Sprintf("cell %dx%d, font %q", cellW, cellH, fontName), "GDI SetDIBitsToDevice")
