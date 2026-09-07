@@ -653,6 +653,10 @@ func runInX11Window(cols, rows int, fontName string, fontSize float64, setupApp 
 		return host.cols, host.rows, nil
 	}
 
+	// No terminal is behind this window, so the OSC 52 fallback has nobody to
+	// reach and would print as garbage in the shell f4 was started from.
+	DisableTerminalClipboard()
+
 	go host.RunEventLoop()
 	setupApp()
 	// After setupApp: the application installs the debug log sink during

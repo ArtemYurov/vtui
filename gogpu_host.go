@@ -451,6 +451,11 @@ func RunGogpuHost(cols, rows int, fontName string, fontSize float64, setupApp fu
 	// application registered as its target.
 	app.OnDragDrop(host.handleFileDrop)
 	SetDragBackend(host)
+	// This is a window, so there is no terminal to receive the OSC 52
+	// fallback: it would land in the shell f4 was started from and print as
+	// garbage. Copy and paste keep the OS clipboard helpers and the internal
+	// buffer, which is what DisableTerminalClipboard leaves in place.
+	DisableTerminalClipboard()
 	logGogpuDragEnvironment()
 	// A drag out has to begin on this loop: on Windows and X11 gogpu's
 	// drag source is a modal loop of its own, and everywhere the window

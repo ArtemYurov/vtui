@@ -110,3 +110,32 @@ func TestSetClipboard_TruncatesOversizedTextInGUIMode(t *testing.T) {
 		t.Errorf("stored %d bytes, want the %d byte cap", got, limit)
 	}
 }
+
+// Every GUI host has to turn the OSC 52 fallback off, and three of them did
+// not: gogpu, X11 and Wayland left it on, so a copy in a window with no
+// clipboard helper installed wrote an escape sequence into the shell the
+// application was started from.
+//
+// The check reads the sources because the hosts themselves cannot run here:
+// each one needs a display, a GPU stack or a compositor. A new backend is not
+// covered until it is added to this list, which is the point at which someone
+// has to think about the question.
+func TestGUIHostsDisableTheTerminalClipboard(t *testing.T) {
+	hosts := []string{
+		"ebiten_host.go",
+		"gogpu_host.go",
+		"wayland_host.go",
+		"win32_gui_windows.go",
+		"x11_host.go",
+	}
+
+	for _, name := range hosts {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if !strings.Contains(string(src), "DisableTerminalClipboard()") {
+			t.Errorf("%s never calls DisableTerminalClipboard: a window would emit OSC 52 at the shell behind it", name)
+		}
+	}
+}

@@ -174,6 +174,10 @@ func runInWaylandWindow(cols, rows int, fontName string, fontSize float64, setup
 		return host.cols, host.rows, nil
 	}
 
+	// No terminal is behind this window, so the OSC 52 fallback has nobody to
+	// reach and would print as garbage in the shell f4 was started from.
+	DisableTerminalClipboard()
+
 	host.widget.ScheduleResize(logicalWaylandPixels(cols*cellW, host.scale), logicalWaylandPixels(rows*cellH, host.scale))
 
 	setupApp()
