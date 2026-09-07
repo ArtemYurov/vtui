@@ -18,6 +18,11 @@ type MenuItem struct {
 	OnClick      func() // Closure called when selected
 	UserData     any
 	Separator    bool
+	// SubItems turns the item into a nested menu: selecting it opens a
+	// second VMenu beside this one instead of firing an action. An item
+	// with SubItems is a heading, so its Command and OnClick are never
+	// used, and it carries the submenu marker where a Shortcut would go.
+	SubItems []MenuItem
 }
 
 // VMenu implements a vertical menu with navigation support.
@@ -37,6 +42,13 @@ type VMenu struct {
 	OnKeyDown    func(*vtinput.InputEvent) bool
 	HideShadow   bool
 	BoxType      int
+
+	// parentMenu and activeSub link a chain of nested menus. Only the
+	// deepest one is on top of the frame stack and sees input, so closing
+	// or confirming has to walk the chain explicitly: a submenu left
+	// behind would keep painting over the screen with nothing to close it.
+	parentMenu *VMenu
+	activeSub  *VMenu
 
 	// Palette entries the menu paints with. They default to the Menu.* group;
 	// a ComboBox points them at Dialog.Combo.* so its dropdown stands apart
@@ -97,6 +109,149 @@ func (m *VMenu) AddSeparator() {
 
 func (m *VMenu) GetItemCount() int { return len(m.Items) }
 
+// menuItemHint returns the text drawn right-aligned on a menu row: the
+// shortcut, or the marker that says the row opens a nested menu.
+func menuItemHint(item MenuItem) string {
+	if item.Shortcut != "" {
+		return item.Shortcut
+	}
+	if len(item.SubItems) > 0 {
+		return SubMenuMarker
+	}
+	return ""
+}
+
+// menuItemsWidth returns the box width the items need: the widest row plus
+// its hint column, never below minWidth.
+func menuItemsWidth(items []MenuItem, minWidth int) int {
+	width := minWidth
+	for _, item := range items {
+		if item.Separator {
+			continue
+		}
+		clean, _, _ := ParseAmpersandString(" " + item.Text)
+		w := StringWidth(clean)
+		if hint := menuItemHint(item); hint != "" {
+			w += StringWidth(hint + " ")
+		}
+		w += 4 // Minimum visual padding between text and shortcut/border
+		if w > width {
+			width = w
+		}
+	}
+	return width
+}
+
+// HasSubMenu reports whether the item at index opens a nested menu.
+func (m *VMenu) HasSubMenu(index int) bool {
+	return index >= 0 && index < len(m.Items) && len(m.Items[index].SubItems) > 0
+}
+
+// OpenSubMenu drops the nested menu of the item at index next to its row,
+// to the right of this menu or -- when the screen edge is in the way -- to
+// its left. It reports whether a menu was opened.
+func (m *VMenu) OpenSubMenu(index int) bool {
+	if !m.HasSubMenu(index) || FrameManager == nil {
+		return false
+	}
+	m.CloseSubMenu()
+
+	item := m.Items[index]
+	sub := NewVMenu(item.Text)
+	sub.SetOwner(m)
+	sub.parentMenu = m
+	sub.HideShadow = m.HideShadow
+	sub.BoxType = m.BoxType
+	sub.ColorTextIdx = m.ColorTextIdx
+	sub.ColorSelectedTextIdx = m.ColorSelectedTextIdx
+	sub.ColorHighlightIdx = m.ColorHighlightIdx
+	sub.ColorSelectedHighlightIdx = m.ColorSelectedHighlightIdx
+	sub.ColorBoxIdx = m.ColorBoxIdx
+	sub.ColorTitleIdx = m.ColorTitleIdx
+	for _, nested := range item.SubItems {
+		if nested.Separator {
+			sub.AddSeparator()
+		} else {
+			sub.AddItem(nested)
+		}
+	}
+	// Picking a row in the nested menu is picking a row in this one, so the
+	// listener that closes the whole construction still hears about it.
+	sub.OnAction = func(int) {
+		if m.OnAction != nil {
+			m.OnAction(m.SelectPos)
+		}
+	}
+
+	screenW, screenH := FrameManager.GetScreenSize(), FrameManager.GetScreenHeight()
+	width := menuItemsWidth(item.SubItems, 20)
+	// The nested box shares the border column of the parent rather than
+	// standing a gap away from it.
+	x1 := m.X2
+	if x1+width-1 > screenW-1 {
+		x1 = m.X1 - width + 1
+	}
+	if x1 < 0 {
+		x1 = 0
+	}
+	x2 := x1 + width - 1
+	if x2 > screenW-1 {
+		x2 = screenW - 1
+	}
+
+	// The first nested row lines up with the row that opened it.
+	y1 := m.Y1 + m.MarginTop + (index - m.TopPos) - 1
+	y2 := y1 + sub.GetItemCount() + 1
+	if y2 > screenH-1 {
+		y1 -= y2 - (screenH - 1)
+		y2 = screenH - 1
+	}
+	if y1 < 0 {
+		y1 = 0
+	}
+	if y2 > screenH-1 {
+		y2 = screenH - 1
+	}
+	if y2 < y1+2 {
+		y2 = y1 + 2
+	}
+	sub.SetPosition(x1, y1, x2, y2)
+
+	m.activeSub = sub
+	FrameManager.Push(sub)
+	return true
+}
+
+// CloseSubMenu closes the nested menu opened from this one, deepest first.
+func (m *VMenu) CloseSubMenu() {
+	sub := m.activeSub
+	if sub == nil {
+		return
+	}
+	m.activeSub = nil
+	sub.CloseSubMenu()
+	sub.done = true
+	sub.exitCode = -1
+	if FrameManager != nil {
+		FrameManager.RemoveFrame(sub)
+	}
+}
+
+// closeAncestors dismisses the menus this one was opened from. A nested
+// menu that finishes -- an item chosen, F10, a click outside -- ends the
+// whole construction, and the parents are not on top to notice it
+// themselves.
+func (m *VMenu) closeAncestors() {
+	for parent := m.parentMenu; parent != nil; parent = parent.parentMenu {
+		parent.activeSub = nil
+		parent.done = true
+		parent.exitCode = -1
+		if FrameManager != nil {
+			FrameManager.RemoveFrame(parent)
+		}
+	}
+}
+
 // ProcessKey processes navigation keys.
 func (m *VMenu) ProcessKey(e *vtinput.InputEvent) bool {
 	if m.IsDisabled() || !e.KeyDown {
@@ -114,14 +269,28 @@ func (m *VMenu) ProcessKey(e *vtinput.InputEvent) bool {
 
 	switch e.VirtualKeyCode {
 	case vtinput.VK_LEFT:
+		if m.parentMenu != nil {
+			// One level back, not out of the menu bar entirely.
+			m.parentMenu.CloseSubMenu()
+			return true
+		}
 		if isSubMenu {
 			FrameManager.EmitCommand(CmMenuLeft, nil)
 			return true
 		}
 		return false // Boundary exit
 	case vtinput.VK_RIGHT:
+		if m.HasSubMenu(m.SelectPos) {
+			m.OpenSubMenu(m.SelectPos)
+			return true
+		}
 		if isSubMenu {
 			FrameManager.EmitCommand(CmMenuRight, nil)
+			return true
+		}
+		if m.parentMenu != nil {
+			// Inside a nested menu Right is the open gesture; with nothing
+			// to open it must not walk the selection sideways.
 			return true
 		}
 		// If last item in standalone menu, let focus cycle (unless wrapping is on)
@@ -142,9 +311,17 @@ func (m *VMenu) ProcessKey(e *vtinput.InputEvent) bool {
 	// PgUp/PgDn fall through to HandleKey like Home/End do: HandleNavKey
 	// pages via PageBy, which clamps at the list ends even though Wrap is on.
 	case vtinput.VK_ESCAPE, vtinput.VK_F10:
+		if m.parentMenu != nil && e.VirtualKeyCode == vtinput.VK_ESCAPE {
+			m.parentMenu.CloseSubMenu()
+			return true
+		}
 		m.SetExitCode(-1)
 		return FrameManager.GetTopFrame() == Frame(m)
 	case vtinput.VK_RETURN:
+		if m.HasSubMenu(m.SelectPos) {
+			m.OpenSubMenu(m.SelectPos)
+			return true
+		}
 		if m.SelectPos >= 0 && m.SelectPos < m.ItemCount {
 			// Virtual consumers size the menu via ItemCount without backing
 			// Items; such rows carry no command to fire, but the selection is
@@ -189,6 +366,10 @@ func (m *VMenu) ProcessKey(e *vtinput.InputEvent) bool {
 					return true
 				}
 				m.SetSelectPos(i)
+				if m.HasSubMenu(i) {
+					m.OpenSubMenu(i)
+					return true
+				}
 
 				oldCmd := m.Command
 				m.Command = item.Command
@@ -223,6 +404,8 @@ func (m *VMenu) GetType() FrameType {
 }
 
 func (m *VMenu) SetExitCode(code int) {
+	m.CloseSubMenu()
+	m.closeAncestors()
 	m.done = true
 	m.exitCode = code
 	if code == -1 {
@@ -281,6 +464,10 @@ func (m *VMenu) ProcessMouse(e *vtinput.InputEvent) bool {
 		clickIdx := m.GetClickIndex(int(e.MouseY))
 		if clickIdx != -1 && (clickIdx >= len(m.Items) || !m.Items[clickIdx].Separator) {
 			m.SetSelectPos(clickIdx)
+			if m.HasSubMenu(clickIdx) {
+				m.OpenSubMenu(clickIdx)
+				return true
+			}
 			// Virtual rows (ItemCount beyond len(Items)) have no command to
 			// fire; the click still selects and confirms them.
 			if clickIdx < len(m.Items) {
@@ -387,11 +574,11 @@ func (m *VMenu) DisplayObject(scr *ScreenBuf) {
 		// Calculate layout
 		//clean, _, _ := ParseAmpersandString(item.Text)
 		//vLenText := StringWidth(clean) + 1 // +1 for leading space
-		shortcutText := ""
-		vLenShortcut := 0
-		if item.Shortcut != "" {
-			shortcutText = item.Shortcut + " "
-			vLenShortcut = StringWidth(shortcutText)
+		hintText := ""
+		vLenHint := 0
+		if hint := menuItemHint(item); hint != "" {
+			hintText = hint + " "
+			vLenHint = StringWidth(hintText)
 		}
 
 		// Draw background and text
@@ -404,8 +591,8 @@ func (m *VMenu) DisplayObject(scr *ScreenBuf) {
 			textX += runewidth.StringWidth(item.AccentPrefix)
 		}
 		p.DrawControlText(textX, currY, item.Text, itemAttr, hiAttr)
-		if shortcutText != "" {
-			p.DrawString(m.X2-vLenShortcut, currY, shortcutText, itemAttr)
+		if hintText != "" {
+			p.DrawString(m.X2-vLenHint, currY, hintText, itemAttr)
 		}
 	}
 
