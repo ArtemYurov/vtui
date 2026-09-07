@@ -871,23 +871,23 @@ func loadGogpuFont(fontName string, size float64) (text.Face, *fontFallbackChain
 	// list is ~400 MB of font files and gg holds each twice) in sessions that
 	// never drew a single glyph from them. Whether gg can actually open a file
 	// is still logged — by the chain's warm() sweep, shortly after startup.
+	//
+	// The chain is built even when none of the listed paths exists: its
+	// discovery step still finds the per-script fonts no curated list can
+	// enumerate, and those are installed independently of the CJK ones.
 	var chain *fontFallbackChain
 	if noFallback {
 		DebugLog("GOGPU_DIAG_FONT: fallback chain disabled by VTUI_GOGPU_NO_FALLBACK")
 	} else {
+		chain = newGogpuFallbackChain(size)
 		for _, p := range fallbackPathsForGUI() {
 			if _, err := os.Stat(p); err != nil {
 				continue
 			}
 			DebugLog("GOGPU_DIAG_FONT: fallback present, deferred until first use: %s", p)
-			if chain == nil {
-				chain = newGogpuFallbackChain(size)
-			}
 			chain.entries = append(chain.entries, fontFallbackEntry{path: p})
 		}
-		if chain != nil {
-			chain.warm()
-		}
+		chain.warm()
 	}
 
 	// text.MultiFace stays out of this backend deliberately. It reports no
