@@ -88,6 +88,41 @@ func SetOSClipboard(text string) bool {
 	return setOSClipboard(text)
 }
 
+// resolveClipboardRead picks between what the OS clipboard answered and the
+// buffer this process keeps.
+//
+// An empty graphical clipboard is an answer, and behind a native window it is
+// a definite one: nothing there can be more current. In a terminal it is not.
+// goclip speaks X11 and Wayland itself, so a driver is available wherever
+// DISPLAY is set -- including an SSH session whose display is forwarded to a
+// machine that is not the one the terminal is on. That display can sit empty
+// while the clipboard the user actually sees holds what this process copied a
+// moment ago, and answering "empty" there loses the copy. A non-empty
+// graphical answer still wins, so a copy made in another application is never
+// overridden.
+func resolveClipboardRead(osText string, osOK bool, internal string, noTerminal bool) string {
+	if !osOK {
+		return internal
+	}
+	if osText != "" || noTerminal {
+		return osText
+	}
+	if internal != "" {
+		return internal
+	}
+	return osText
+}
+
+func readClipboardSources() (osText string, osOK bool, internal string) {
+	if !testSkipOSClipboard {
+		osText, osOK = getOSClipboard()
+	}
+	internalClipMu.Lock()
+	internal = internalClipboard
+	internalClipMu.Unlock()
+	return osText, osOK, internal
+}
+
 // GetClipboard retrieves text from the system clipboard.
 func GetClipboard() string {
 	DebugLog("CLIPBOARD: GetClipboard called")
@@ -96,28 +131,15 @@ func GetClipboard() string {
 		return text
 	}
 	DebugLog("CLIPBOARD: GetFar2lClipboard FAILED or DISABLED")
-	if !testSkipOSClipboard {
-		if text, ok := getOSClipboard(); ok {
-			DebugLog("CLIPBOARD: getOSClipboard SUCCESS, len: %d", len(text))
-			return text
-		}
-	}
-	internalClipMu.Lock()
-	fallback := internalClipboard
-	internalClipMu.Unlock()
-	DebugLog("CLIPBOARD: Returning internal buffer, len: %d", len(fallback))
-	return fallback
+	osText, osOK, internal := readClipboardSources()
+	DebugLog("CLIPBOARD: getOSClipboard ok=%v, len: %d", osOK, len(osText))
+	text := resolveClipboardRead(osText, osOK, internal, noTerminalBehind.Load())
+	DebugLog("CLIPBOARD: Returning %d bytes", len(text))
+	return text
 }
 
 // GetOSClipboard bypasses terminal extensions and reads directly from the OS clipboard.
 func GetOSClipboard() string {
-	if !testSkipOSClipboard {
-		if text, ok := getOSClipboard(); ok {
-			return text
-		}
-	}
-	internalClipMu.Lock()
-	fallback := internalClipboard
-	internalClipMu.Unlock()
-	return fallback
+	osText, osOK, internal := readClipboardSources()
+	return resolveClipboardRead(osText, osOK, internal, noTerminalBehind.Load())
 }

@@ -241,6 +241,14 @@ type frameManager struct {
 	// started, so its result belongs to this manager rather than that global.
 	far2lEnabled    atomic.Bool
 	far2lConfigured atomic.Bool
+	// far2lNegotiated records that a terminal acknowledged the extensions.
+	// Init resets the rest of this manager for a fresh screen, and used to
+	// reset far2lEnabled with it: a second Init -- the session picker before
+	// the main screen, a host that re-inits for its own buffer -- silently
+	// put the process back to no far2l at all, because the terminal only
+	// acknowledges once. The acknowledgement outlives the screen it arrived
+	// on, so it is kept here and Init honours it.
+	far2lNegotiated atomic.Bool
 
 	// Global standard UI components
 	DisabledCommands CommandSet
@@ -755,7 +763,7 @@ func (fm *frameManager) Init(scr *ScreenBuf) {
 	fm.workspaceTabDragHits = nil
 	fm.currentToast = nil
 	fm.needsRender.Store(true)
-	fm.far2lEnabled.Store(Far2lEnabled)
+	fm.far2lEnabled.Store(Far2lEnabled || fm.far2lNegotiated.Load())
 	fm.far2lConfigured.Store(true)
 
 	if fm.RedrawChan == nil {
@@ -2868,6 +2876,7 @@ func (fm *frameManager) dispatchEvent(ev *vtinput.InputEvent, is_injected bool) 
 		DebugLog("FM_DISPATCH: Processing Far2l event: cmd=%q", ev.Far2lCommand)
 		if ev.Far2lCommand == "ok" {
 			DebugLog("FM_DISPATCH: Far2l extensions successfully negotiated with host")
+			fm.far2lNegotiated.Store(true)
 			fm.far2lEnabled.Store(true)
 			// A screen may have asked for its graphics protocol before the
 			// asynchronous far2l acknowledgement arrived. Switch it now so

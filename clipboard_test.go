@@ -64,3 +64,59 @@ func TestClipboard_Truncation(t *testing.T) {
 		t.Errorf("Expected OSC 52 payload in stdout, got %q", output[:min(len(output), 100)])
 	}
 }
+
+// The clipboard read has three sources and they disagree in one interesting
+// way: a graphical driver that answers "empty". goclip speaks X11 and Wayland
+// itself, so that driver is available wherever DISPLAY is set -- an SSH
+// session with a forwarded display included, where it is not the clipboard
+// the user is looking at (f4#922).
+func TestResolveClipboardRead(t *testing.T) {
+	cases := []struct {
+		name       string
+		osText     string
+		osOK       bool
+		internal   string
+		noTerminal bool
+		want       string
+	}{
+		{
+			name:     "no graphical driver leaves the process buffer",
+			internal: "copied here",
+			want:     "copied here",
+		},
+		{
+			name:     "a graphical answer with text always wins",
+			osText:   "copied elsewhere",
+			osOK:     true,
+			internal: "copied here",
+			want:     "copied elsewhere",
+		},
+		{
+			name:     "an empty display does not erase the copy",
+			osOK:     true,
+			internal: "copied here",
+			want:     "copied here",
+		},
+		{
+			name:       "behind a native window empty is the answer",
+			osOK:       true,
+			internal:   "copied here",
+			noTerminal: true,
+			want:       "",
+		},
+		{
+			name: "nothing anywhere is still nothing",
+			osOK: true,
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveClipboardRead(tc.osText, tc.osOK, tc.internal, tc.noTerminal)
+			if got != tc.want {
+				t.Fatalf("resolveClipboardRead = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
