@@ -602,8 +602,8 @@ func (s *ScreenBuf) Dump(w io.Writer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	fmt.Fprintf(w, "VTUI_SCREEN_DUMP_V1 %dx%d\n", s.width, s.height)
-	fmt.Fprintln(w, "--- TEXT PREVIEW ---")
+	fmt.Fprintf(w, "%s %dx%d\n", ScreenDumpVersion, s.width, s.height)
+	fmt.Fprintln(w, screenDumpTextMarker)
 	for y := 0; y < s.height; y++ {
 		var line strings.Builder
 		for x := 0; x < s.width; x++ {
@@ -612,8 +612,8 @@ func (s *ScreenBuf) Dump(w io.Writer) {
 		fmt.Fprintln(w, line.String())
 	}
 
-	fmt.Fprintln(w, "--- CELL METADATA (RLE) ---")
-	fmt.Fprintln(w, "Format: [AttrHex]xRepeatCount ...")
+	fmt.Fprintln(w, screenDumpCellMarker)
+	fmt.Fprintln(w, screenDumpFormatLine)
 	for y := 0; y < s.height; y++ {
 		fmt.Fprintf(w, "R%d: ", y)
 		count := 0
