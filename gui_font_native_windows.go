@@ -37,7 +37,7 @@ type win32Mat2 struct {
 	eM22 win32Fixed
 }
 
-type win32Point struct {
+type win32GlyphPoint struct {
 	x int32
 	y int32
 }
@@ -45,7 +45,7 @@ type win32Point struct {
 type win32GlyphMetrics struct {
 	blackBoxX uint32
 	blackBoxY uint32
-	origin    win32Point
+	origin    win32GlyphPoint
 	cellIncX  int16
 	cellIncY  int16
 }

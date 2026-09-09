@@ -7,7 +7,3 @@ import "golang.org/x/image/font"
 func wrapGUIFace(_ string, face font.Face, _, _ float64) font.Face {
 	return face
 }
-
-func guiFontFamilyForPath(_ string) string {
-	return ""
-}
